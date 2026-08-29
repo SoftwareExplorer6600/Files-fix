@@ -1,8 +1,9 @@
 // Copyright (c) Files Community
-// Licensed under the MIT License.
+// SPDX-License-Identifier: MPL-2.0
 
 using Files.App.Controls;
 using Microsoft.UI.Xaml;
+using WinRT;
 
 namespace Files.App.ViewModels.Settings
 {
@@ -18,13 +19,13 @@ namespace Files.App.ViewModels.Settings
 		private List<SettingsSearchResult>? _searchIndex;
 
 		[ObservableProperty]
-		private SettingsPageKind _selectedPage = SettingsPageKind.GeneralPage;
+		public partial SettingsPageKind SelectedPage { get; set; } = SettingsPageKind.GeneralPage;
 
 		[ObservableProperty]
 		[NotifyPropertyChangedFor(nameof(IsSearchActive))]
 		[NotifyPropertyChangedFor(nameof(HasNoSearchResults))]
 		[NotifyPropertyChangedFor(nameof(SearchHeading))]
-		private string _searchQuery = string.Empty;
+		public partial string SearchQuery { get; set; } = string.Empty;
 
 		public bool IsSearchActive => !string.IsNullOrWhiteSpace(SearchQuery);
 
@@ -91,6 +92,7 @@ namespace Files.App.ViewModels.Settings
 			SearchQuery = string.Empty;
 		}
 
+		[DynamicWindowsRuntimeCast(typeof(Style))]
 		private static SettingsNavigationItem CreateNavigationItem(SettingsPageKind pageKind, string automationId, string text, string iconStyleKey)
 		{
 			var iconStyle = (Style)Application.Current.Resources[iconStyleKey];
@@ -106,7 +108,7 @@ namespace Files.App.ViewModels.Settings
 		}
 	}
 
-	public sealed partial class SettingsNavigationItem : ObservableObject, ISidebarItemModel
+	public sealed partial class SettingsNavigationItem : ObservableObject, ISidebarItemModel, ISidebarItemPresentationModel
 	{
 		public SettingsPageKind PageKind { get; }
 		public string AutomationId { get; }
@@ -116,11 +118,13 @@ namespace Files.App.ViewModels.Settings
 		// ISidebarItemModel
 		public object? Children => null;
 		public string? Path => null;
-		[ObservableProperty] private bool _isExpanded;
+		[ObservableProperty] public partial bool IsExpanded { get; set; }
 
-		// DefaultSidebarItemTemplate bindings
+		// Sidebar presentation
 		public object? ToolTip => Text;
 		public object? ItemDecorator => null;
+		FrameworkElement ISidebarItemPresentationModel.IconElement => IconElement;
+		FrameworkElement? ISidebarItemPresentationModel.ItemDecorator => null;
 
 		public SettingsNavigationItem(SettingsPageKind pageKind, string automationId, string text, ThemedIcon iconElement)
 		{

@@ -1,12 +1,12 @@
 // Copyright (c) Files Community
-// Licensed under the MIT License.
+// SPDX-License-Identifier: MPL-2.0
 
 namespace Files.App.Controls
 {
 	/// <summary>
 	/// Per-row wrapper used by the sidebar's virtualized ItemsRepeater. Carries the row's tree depth and section-gap flags so the underlying data items don't have to.
 	/// </summary>
-	public sealed class FlatSidebarItem : INotifyPropertyChanged
+	public sealed partial class FlatSidebarItem : INotifyPropertyChanged
 	{
 		public ISidebarItemModel Item { get; }
 

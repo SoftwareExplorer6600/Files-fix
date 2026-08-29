@@ -5,7 +5,6 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
 using System.IO;
-using Vanara.Windows.Shell;
 using Windows.Storage;
 
 namespace Files.App.Utils.Cloud
@@ -66,11 +65,11 @@ namespace Files.App.Utils.Cloud
 				var folderResult = await FilesystemTasks.Wrap(() => StorageFolder.GetFolderFromPathAsync(path).AsTask());
 				if (!folderResult)
 				{
-					_logger.LogWarning($"Could not access Google Drive path as local storage: {path}");
+					_logger.LogWarning($"Could not access Google Drive path as local storage: {LogPathHelper.RedactUserName(path)}");
 					continue;
 				}
 
-				var folder = folderResult.Result;
+				var folder = folderResult.Result!;
 				string title = reader["title"]?.ToString() ?? folder.Name;
 
 				Debug.WriteLine("YIELD RETURNING from `GoogleDriveCloudDetector.GetProviders()` (roots): ");
@@ -99,11 +98,11 @@ namespace Files.App.Utils.Cloud
 				var folderResult = await FilesystemTasks.Wrap(() => StorageFolder.GetFolderFromPathAsync(path).AsTask());
 				if (!folderResult)
 				{
-					_logger.LogWarning($"Could not access Google Drive path as local storage: {path}");
+					_logger.LogWarning($"Could not access Google Drive path as local storage: {LogPathHelper.RedactUserName(path)}");
 					continue;
 				}
 
-				var folder = folderResult.Result;
+				var folder = folderResult.Result!;
 				string title = reader["name"]?.ToString() ?? folder.Name;
 
 				Debug.WriteLine("YIELD RETURNING from `GoogleDriveCloudDetector.GetProviders` (media): ");
@@ -270,7 +269,7 @@ namespace Files.App.Utils.Cloud
 		{
 			if (Directory.Exists(path))
 				return true;
-			_logger.LogWarning($"Invalid path: {path}");
+			_logger.LogWarning($"Invalid path: {LogPathHelper.RedactUserName(path)}");
 			return false;
 		}
 
@@ -291,7 +290,6 @@ namespace Files.App.Utils.Cloud
 		{
 			// If `path` contains a shortcut named "My Drive", store its target in `shellFolderBaseFirst`.
 			// This happens when "My Drive syncing options" is set to "Mirror files".
-			// TODO: Avoid to use Vanara (#15000)
 			using var rootFolder = ShellFolderExtensions.GetShellItemFromPathOrPIDL(path) as ShellFolder;
 			var myDriveFolder = Environment.ExpandEnvironmentVariables((
 					rootFolder?.FirstOrDefault(si =>
