@@ -36,20 +36,6 @@
 		<Setter Target="Padding" Value="0" />
 	</Style>
 
-	<DataTemplate x:Key="DefaultSidebarItemTemplate">
-		<local:SidebarItem
-			AutomationProperties.AutomationId="{Binding Item.Text}"
-			ContentOpacity="{Binding RowOpacity}"
-			Decorator="{Binding Item.ItemDecorator}"
-			Icon="{Binding Item.IconElement}"
-			IsExpanded="{Binding Item.IsExpanded, Mode=TwoWay}"
-			Item="{Binding Item}"
-			Margin="{Binding SectionGapMargin}"
-			NestingLevel="{Binding Depth}"
-			Text="{Binding Item.Text}"
-			ToolTip="{Binding Item.ToolTip}" />
-	</DataTemplate>
-
 	<Style TargetType="local:SidebarItem">
 		<Setter Property="IsTabStop" Value="False" />
 		<Setter Property="Template">
@@ -211,19 +197,13 @@
 											x:Name="FlyoutChildrenPresenter"
 											HorizontalAlignment="Stretch"
 											AutomationProperties.AccessibilityView="Content"
-											ItemsSource="{Binding Item.Children, Mode=OneWay}"
 											XYFocusKeyboardNavigation="Enabled">
 											<ItemsRepeater.ItemTemplate>
 												<DataTemplate>
 													<local:SidebarItem
-														AutomationProperties.AutomationId="{Binding Text}"
-														Decorator="{Binding ItemDecorator}"
-														Icon="{Binding IconElement}"
-														IsExpanded="{Binding IsExpanded, Mode=TwoWay}"
 														IsInFlyout="True"
 														Item="{Binding}"
-														Text="{Binding Text}"
-														ToolTip="{Binding ToolTip}" />
+														UseItemPresentation="True" />
 												</DataTemplate>
 											</ItemsRepeater.ItemTemplate>
 										</ItemsRepeater>
@@ -245,9 +225,7 @@
 								<VisualState x:Name="NoChildren">
 									<VisualState.Setters>
 										<Setter Target="ItemNameTextBlock.Margin" Value="8,0,12,0" />
-										<Setter Target="ItemNameTextBlock.FontSize" Value="12" />
 										<Setter Target="ItemNameTextBlock.FontWeight" Value="SemiBold" />
-										<Setter Target="ItemNameTextBlock.Foreground" Value="{ThemeResource TextFillColorTertiaryBrush}" />
 									</VisualState.Setters>
 								</VisualState>
 
@@ -255,9 +233,7 @@
 									<VisualState.Setters>
 										<Setter Target="ExpandCollapseChevron.Visibility" Value="Visible" />
 										<Setter Target="ItemNameTextBlock.Margin" Value="8,0,12,0" />
-										<Setter Target="ItemNameTextBlock.FontSize" Value="12" />
 										<Setter Target="ItemNameTextBlock.FontWeight" Value="SemiBold" />
-										<Setter Target="ItemNameTextBlock.Foreground" Value="{ThemeResource TextFillColorTertiaryBrush}" />
 									</VisualState.Setters>
 								</VisualState>
 
@@ -265,9 +241,7 @@
 									<VisualState.Setters>
 										<Setter Target="ExpandCollapseChevron.Visibility" Value="Visible" />
 										<Setter Target="ItemNameTextBlock.Margin" Value="8,0,12,0" />
-										<Setter Target="ItemNameTextBlock.FontSize" Value="12" />
 										<Setter Target="ItemNameTextBlock.FontWeight" Value="SemiBold" />
-										<Setter Target="ItemNameTextBlock.Foreground" Value="{ThemeResource TextFillColorTertiaryBrush}" />
 									</VisualState.Setters>
 								</VisualState>
 

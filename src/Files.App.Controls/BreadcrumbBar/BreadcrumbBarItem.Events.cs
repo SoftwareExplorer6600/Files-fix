@@ -1,8 +1,9 @@
 ﻿// Copyright (c) Files Community
-// Licensed under the MIT License.
+// SPDX-License-Identifier: MPL-2.0
 
 using Microsoft.UI.Xaml.Input;
 using Windows.System;
+using WinRT;
 
 namespace Files.App.Controls
 {
@@ -31,6 +32,7 @@ namespace Files.App.Controls
 				FlyoutBase.ShowAttachedFlyout(_itemChevronButton);
 		}
 
+		[DynamicWindowsRuntimeCast(typeof(MenuFlyout))]
 		private void ChevronDropDownMenuFlyout_Opening(object? sender, object e)
 		{
 			if (_ownerRef is null ||
@@ -46,6 +48,7 @@ namespace Files.App.Controls
 			VisualStateManager.GoToState(this, "ChevronNormalOn", true);
 		}
 
+		[DynamicWindowsRuntimeCast(typeof(MenuFlyout))]
 		private void ChevronDropDownMenuFlyout_Closed(object? sender, object e)
 		{
 			if (_ownerRef is null ||
