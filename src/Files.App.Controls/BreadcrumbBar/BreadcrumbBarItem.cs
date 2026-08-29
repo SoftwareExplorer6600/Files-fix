@@ -1,8 +1,9 @@
 ﻿// Copyright (c) Files Community
-// Licensed under the MIT License.
+// SPDX-License-Identifier: MPL-2.0
 
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml.Input;
+using WinRT;
 
 namespace Files.App.Controls
 {
@@ -33,6 +34,8 @@ namespace Files.App.Controls
 
 		// Methods
 
+		[DynamicWindowsRuntimeCast(typeof(Button))]
+		[DynamicWindowsRuntimeCast(typeof(MenuFlyout))]
 		protected override void OnApplyTemplate()
 		{
 			base.OnApplyTemplate();

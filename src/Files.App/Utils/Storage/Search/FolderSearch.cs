@@ -87,11 +87,12 @@ namespace Files.App.Utils.Storage
 				}
 				else
 				{
-					await AddItemsAsync(Folder, results, token);
+					await AddItemsAsync(Folder ?? throw new InvalidOperationException("The search folder has not been set."), results, token);
 				}
 			}
 			catch (OperationCanceledException)
 			{
+				return;
 			}
 			catch (Exception e)
 			{
@@ -109,7 +110,7 @@ namespace Files.App.Utils.Storage
 			{
 				foreach (var drive in drivesViewModel.Drives.ToList().Cast<DriveItem>().Where(x => !x.IsNetwork))
 				{
-					await AddItemsAsync(drive.Path, results, token);
+					await AddItemsAsync(drive.Path!, results, token);
 				}
 			}
 		}
@@ -130,7 +131,7 @@ namespace Files.App.Utils.Storage
 				}
 				else
 				{
-					await AddItemsAsync(Folder, results, token);
+					await AddItemsAsync(Folder ?? throw new InvalidOperationException("The search folder has not been set."), results, token);
 				}
 			}
 			catch (Exception e)
@@ -149,7 +150,7 @@ namespace Files.App.Utils.Storage
 			var options = ToQueryOptions();
 
 			var queryResult = folder.CreateItemQueryWithOptions(options);
-			var items = await queryResult.GetItemsAsync(0, stepSize);
+			var items = await queryResult.GetItemsAsync(0, stepSize).AsTask(token);
 
 			while (items.Count > 0)
 			{
@@ -178,7 +179,7 @@ namespace Files.App.Utils.Storage
 
 				index += (uint)items.Count;
 				stepSize = Math.Min(defaultStepSize, UsedMaxItemCount - (uint)results.Count);
-				items = await queryResult.GetItemsAsync(index, stepSize);
+				items = await queryResult.GetItemsAsync(index, stepSize).AsTask(token);
 			}
 		}
 
@@ -226,7 +227,7 @@ namespace Files.App.Utils.Storage
 
 						if (string.IsNullOrEmpty(tagValue))
 						{
-							logger.LogWarning("Failed to parse tag query: {Query}", andPart);
+							logger.LogWarning("Failed to parse tag query.");
 							continue;
 						}
 
@@ -255,8 +256,11 @@ namespace Files.App.Utils.Storage
 			return expression;
 		}
 
-		private bool MatchesTagExpression(IEnumerable<string> fileTags, TagQueryExpression expression)
+		private bool MatchesTagExpression(IEnumerable<string>? fileTags, TagQueryExpression expression)
 		{
+			// Imported/synced tag entries can deserialize with a null Tags array, which would NRE on fileTags.Contains below.
+			fileTags ??= [];
+
 			foreach (var orGroup in expression.OrGroups)
 			{
 				bool groupMatches = true;
@@ -307,44 +311,58 @@ namespace Files.App.Utils.Storage
 
 			foreach (var match in matches)
 			{
-				(IntPtr hFile, WIN32_FIND_DATA findData) = await Task.Run(() =>
+				if (token.IsCancellationRequested)
+					return;
+
+				(Win32PInvoke.SafeFindHandle? hFile, WIN32_FIND_DATA findData) = await Task.Run(() =>
 				{
 					int additionalFlags = Win32PInvoke.FIND_FIRST_EX_LARGE_FETCH;
-					IntPtr hFileTsk = Win32PInvoke.FindFirstFileExFromApp(match.FilePath, Win32PInvoke.FINDEX_INFO_LEVELS.FindExInfoBasic,
+					var hFileTsk = Win32PInvoke.FindFirstFileExFromAppSafe(match.FilePath, Win32PInvoke.FINDEX_INFO_LEVELS.FindExInfoBasic,
 						out WIN32_FIND_DATA findDataTsk, Win32PInvoke.FINDEX_SEARCH_OPS.FindExSearchNameMatch, IntPtr.Zero, additionalFlags);
 					return (hFileTsk, findDataTsk);
 				}).WithTimeoutAsync(TimeSpan.FromSeconds(5));
-
-				if (hFile != IntPtr.Zero && hFile.ToInt64() != -1)
+				if (token.IsCancellationRequested)
 				{
-					var isSystem = ((FileAttributes)findData.dwFileAttributes & FileAttributes.System) == FileAttributes.System;
-					var isHidden = ((FileAttributes)findData.dwFileAttributes & FileAttributes.Hidden) == FileAttributes.Hidden;
-					var startWithDot = findData.cFileName.StartsWith('.');
+					hFile?.Dispose();
+					return;
+				}
 
-					bool shouldBeListed = (!isHidden ||
-						(UserSettingsService.FoldersSettingsService.ShowHiddenItems &&
-						(!isSystem || UserSettingsService.FoldersSettingsService.ShowProtectedSystemFiles))) &&
-						(!startWithDot || UserSettingsService.FoldersSettingsService.ShowDotFiles);
-
-					if (shouldBeListed)
+				if (hFile is { IsInvalid: false })
+				{
+					using (hFile)
 					{
-						var item = GetListedItemAsync(match.FilePath, findData);
-						if (item is not null)
+						var isSystem = ((FileAttributes)findData.dwFileAttributes & FileAttributes.System) == FileAttributes.System;
+						var isHidden = ((FileAttributes)findData.dwFileAttributes & FileAttributes.Hidden) == FileAttributes.Hidden;
+						var startWithDot = findData.cFileName.StartsWith('.');
+
+						bool shouldBeListed = (!isHidden ||
+							(UserSettingsService.FoldersSettingsService.ShowHiddenItems &&
+							(!isSystem || UserSettingsService.FoldersSettingsService.ShowProtectedSystemFiles))) &&
+							(!startWithDot || UserSettingsService.FoldersSettingsService.ShowDotFiles);
+
+						if (shouldBeListed)
 						{
-							results.Add(item);
+							var item = GetListedItemAsync(match.FilePath, findData);
+							if (item is not null && !token.IsCancellationRequested)
+								results.Add(item);
 						}
 					}
-
-					Win32PInvoke.FindClose(hFile);
 				}
 				else
 				{
+					hFile?.Dispose();
 					try
 					{
-						IStorageItem item = (BaseStorageFile)await GetStorageFileAsync(match.FilePath);
-						item ??= (BaseStorageFolder)await GetStorageFolderAsync(match.FilePath);
+						IStorageItem? item = (await GetStorageFileAsync(match.FilePath)).Result;
+						item ??= (await GetStorageFolderAsync(match.FilePath)).Result;
+						item = item
+							?? throw new InvalidOperationException($"The search item '{match.FilePath}' could not be opened.");
 						if (!item.Name.StartsWith('.') || UserSettingsService.FoldersSettingsService.ShowDotFiles)
-							results.Add(await GetListedItemAsync(item));
+						{
+							var listedItem = await GetListedItemAsync(item);
+							if (!token.IsCancellationRequested)
+								results.Add(listedItem);
+						}
 					}
 					catch (Exception ex)
 					{
@@ -375,7 +393,9 @@ namespace Files.App.Utils.Storage
 				var hiddenOnlyFromWin32 = false;
 				if (workingFolder)
 				{
-					await SearchAsync(workingFolder, results, token);
+					var storageFolder = workingFolder.Result
+						?? throw new InvalidOperationException($"The search folder '{folder}' could not be opened.");
+					await SearchAsync(storageFolder, results, token);
 					hiddenOnlyFromWin32 = (results.Count != 0);
 				}
 
@@ -389,70 +409,77 @@ namespace Files.App.Utils.Storage
 		private async Task SearchWithWin32Async(string folder, bool hiddenOnly, uint maxItemCount, IList<ListedItem> results, CancellationToken token)
 		{
 			//var sampler = new IntervalSampler(500);
-			(IntPtr hFile, WIN32_FIND_DATA findData) = await Task.Run(() =>
+			if (token.IsCancellationRequested)
+				return;
+
+			(Win32PInvoke.SafeFindHandle? hFile, WIN32_FIND_DATA findData) = await Task.Run(() =>
 			{
 				int additionalFlags = Win32PInvoke.FIND_FIRST_EX_LARGE_FETCH;
-				IntPtr hFileTsk = Win32PInvoke.FindFirstFileExFromApp($"{folder}\\*{QueryWithWildcard}", Win32PInvoke.FINDEX_INFO_LEVELS.FindExInfoBasic,
+				var hFileTsk = Win32PInvoke.FindFirstFileExFromAppSafe($"{folder}\\*{QueryWithWildcard}", Win32PInvoke.FINDEX_INFO_LEVELS.FindExInfoBasic,
 					out WIN32_FIND_DATA findDataTsk, Win32PInvoke.FINDEX_SEARCH_OPS.FindExSearchNameMatch, IntPtr.Zero, additionalFlags);
 				return (hFileTsk, findDataTsk);
 			}).WithTimeoutAsync(TimeSpan.FromSeconds(5));
+			if (token.IsCancellationRequested)
+			{
+				hFile?.Dispose();
+				return;
+			}
 
 			var pendingShortcuts = new List<(string Path, WIN32_FIND_DATA FindData)>();
 
-			if (hFile != IntPtr.Zero && hFile.ToInt64() != -1)
+			if (hFile is { IsInvalid: false } findHandle)
 			{
+				// Always enter the delegate so the find handle is disposed; cancellation is checked before mutations.
 				await Task.Run(() =>
 				{
-					var hasNextFile = false;
-					do
+					using (findHandle)
 					{
-						if (results.Count >= maxItemCount)
+						var rawHandle = findHandle.DangerousGetHandle();
+						var hasNextFile = false;
+						do
 						{
-							break;
-						}
-						var itemPath = Path.Combine(folder, findData.cFileName);
+							if (token.IsCancellationRequested)
+								break;
 
-						var isSystem = ((FileAttributes)findData.dwFileAttributes & FileAttributes.System) == FileAttributes.System;
-						var isHidden = ((FileAttributes)findData.dwFileAttributes & FileAttributes.Hidden) == FileAttributes.Hidden;
-						var startWithDot = findData.cFileName.StartsWith('.');
-						var isShortcut = FileExtensionHelpers.IsShortcutOrUrlFile(findData.cFileName);
+							if (results.Count >= maxItemCount)
+								break;
+							var itemPath = Path.Combine(folder, findData.cFileName);
 
-						bool shouldBeListed = (hiddenOnly ?
-							(!isHidden && isShortcut) || (isHidden && UserSettingsService.FoldersSettingsService.ShowHiddenItems && (!isSystem || UserSettingsService.FoldersSettingsService.ShowProtectedSystemFiles)) :
-							!isHidden || (UserSettingsService.FoldersSettingsService.ShowHiddenItems && (!isSystem || UserSettingsService.FoldersSettingsService.ShowProtectedSystemFiles))) &&
-							(!startWithDot || UserSettingsService.FoldersSettingsService.ShowDotFiles);
+							var isSystem = ((FileAttributes)findData.dwFileAttributes & FileAttributes.System) == FileAttributes.System;
+							var isHidden = ((FileAttributes)findData.dwFileAttributes & FileAttributes.Hidden) == FileAttributes.Hidden;
+							var startWithDot = findData.cFileName.StartsWith('.');
+							var isShortcut = FileExtensionHelpers.IsShortcutOrUrlFile(findData.cFileName);
 
-						if (shouldBeListed)
-						{
-							if (isShortcut)
+							bool shouldBeListed = (hiddenOnly ?
+								(!isHidden && isShortcut) || (isHidden && UserSettingsService.FoldersSettingsService.ShowHiddenItems && (!isSystem || UserSettingsService.FoldersSettingsService.ShowProtectedSystemFiles)) :
+								!isHidden || (UserSettingsService.FoldersSettingsService.ShowHiddenItems && (!isSystem || UserSettingsService.FoldersSettingsService.ShowProtectedSystemFiles))) &&
+								(!startWithDot || UserSettingsService.FoldersSettingsService.ShowDotFiles);
+
+							if (shouldBeListed)
 							{
-								pendingShortcuts.Add((itemPath, findData));
-							}
-							else
-							{
-								var item = GetListedItemAsync(itemPath, findData);
-								if (item is not null)
+								if (isShortcut)
 								{
-									results.Add(item);
+									pendingShortcuts.Add((itemPath, findData));
+								}
+								else
+								{
+									var item = GetListedItemAsync(itemPath, findData);
+									if (item is not null && !token.IsCancellationRequested)
+										results.Add(item);
 								}
 							}
-						}
 
-						if (token.IsCancellationRequested)
-						{
-							break;
-						}
+							if (!token.IsCancellationRequested && (results.Count == 32 || results.Count % 300 == 0 /*|| sampler.CheckNow()*/))
+								SearchTick?.Invoke(this, EventArgs.Empty);
 
-						if (results.Count == 32 || results.Count % 300 == 0 /*|| sampler.CheckNow()*/)
-						{
-							SearchTick?.Invoke(this, EventArgs.Empty);
-						}
-
-						hasNextFile = Win32PInvoke.FindNextFile(hFile, out findData);
-					} while (hasNextFile);
-
-					Win32PInvoke.FindClose(hFile);
-				}, token);
+							hasNextFile = Win32PInvoke.FindNextFile(rawHandle, out findData);
+						} while (hasNextFile);
+					}
+				});
+			}
+			else
+			{
+				hFile?.Dispose();
 			}
 
 			foreach (var (itemPath, itemFindData) in pendingShortcuts)
@@ -463,10 +490,10 @@ namespace Files.App.Utils.Storage
 				var isUrl = FileExtensionHelpers.IsWebLinkFile(itemFindData.cFileName);
 				var shortcutFindData = itemFindData;
 				var isHidden = ((FileAttributes)shortcutFindData.dwFileAttributes & FileAttributes.Hidden) == FileAttributes.Hidden;
-				Win32PInvoke.FileTimeToSystemTime(ref shortcutFindData.ftLastWriteTime, out Win32PInvoke.SYSTEMTIME modifiedTime);
-				Win32PInvoke.FileTimeToSystemTime(ref shortcutFindData.ftCreationTime, out Win32PInvoke.SYSTEMTIME createdTime);
+				Win32PInvoke.FileTimeToSystemTime(in shortcutFindData.ftLastWriteTime, out Win32PInvoke.SYSTEMTIME modifiedTime);
+				Win32PInvoke.FileTimeToSystemTime(in shortcutFindData.ftCreationTime, out Win32PInvoke.SYSTEMTIME createdTime);
 				var fileSize = Win32FindDataExtensions.GetSize(shortcutFindData);
-				var itemFileExtension = shortcutFindData.cFileName.Contains('.', StringComparison.Ordinal) ? Path.GetExtension(itemPath) : null;
+				var itemFileExtension = shortcutFindData.cFileName.Contains('.', StringComparison.Ordinal) ? Path.GetExtension(itemPath)! : string.Empty;
 
 				var shortcutItem = new ShortcutItem(null)
 				{
@@ -476,7 +503,6 @@ namespace Files.App.Utils.Storage
 					Opacity = isHidden ? Constants.UI.DimItemOpacity : 1,
 					FileImage = null,
 					LoadFileIcon = false,
-					NeedsPlaceholderGlyph = false,
 					ItemNameRaw = shortcutFindData.cFileName,
 					ItemDateModifiedReal = modifiedTime.ToDateTime(),
 					ItemDateCreatedReal = createdTime.ToDateTime(),
@@ -514,52 +540,62 @@ namespace Files.App.Utils.Storage
 						itemPath,
 						Constants.ShellIconSizes.Small,
 						false,
-						IconOptions.ReturnIconOnly | IconOptions.UseCurrentScale);
+						IconOptions.ReturnIconOnly);
 					if (iconResult is not null)
 						shortcutItem.FileImage = await iconResult.ToBitmapAsync();
-					else
-						shortcutItem.NeedsPlaceholderGlyph = true;
 				}
+
+				if (token.IsCancellationRequested)
+					break;
 
 				results.Add(shortcutItem);
 
-				if (results.Count == 32 || results.Count % 300 == 0)
+				if (!token.IsCancellationRequested && (results.Count == 32 || results.Count % 300 == 0))
 				{
 					SearchTick?.Invoke(this, EventArgs.Empty);
 				}
 			}
 
-			(IntPtr hSubDir, WIN32_FIND_DATA subDirData) = await Task.Run(() =>
+			if (token.IsCancellationRequested)
+				return;
+
+			(Win32PInvoke.SafeFindHandle? hSubDir, WIN32_FIND_DATA subDirData) = await Task.Run(() =>
 			{
 				int additionalFlags = Win32PInvoke.FIND_FIRST_EX_LARGE_FETCH;
-				IntPtr hSubDirTsk = Win32PInvoke.FindFirstFileExFromApp($"{folder}\\*", Win32PInvoke.FINDEX_INFO_LEVELS.FindExInfoBasic,
+				var hSubDirTsk = Win32PInvoke.FindFirstFileExFromAppSafe($"{folder}\\*", Win32PInvoke.FINDEX_INFO_LEVELS.FindExInfoBasic,
 					out WIN32_FIND_DATA subDirDataTsk, Win32PInvoke.FINDEX_SEARCH_OPS.FindExSearchNameMatch, IntPtr.Zero, additionalFlags);
 				return (hSubDirTsk, subDirDataTsk);
 			}).WithTimeoutAsync(TimeSpan.FromSeconds(5));
+			if (token.IsCancellationRequested)
+			{
+				hSubDir?.Dispose();
+				return;
+			}
 
-			if (hSubDir != IntPtr.Zero && hSubDir.ToInt64() != -1)
+			if (hSubDir is { IsInvalid: false } subDirectoryHandle)
 			{
 				var subDirectories = new List<string>();
 
+				// Always enter the delegate so the find handle is disposed; cancellation is checked before mutations.
 				await Task.Run(() =>
 				{
-					var hasNextDir = false;
-					do
+					using (subDirectoryHandle)
 					{
-						var isDirectory = ((FileAttributes)subDirData.dwFileAttributes & FileAttributes.Directory) == FileAttributes.Directory;
-						if (isDirectory && subDirData.cFileName != "." && subDirData.cFileName != "..")
+						var rawHandle = subDirectoryHandle.DangerousGetHandle();
+						var hasNextDir = false;
+						do
 						{
-							subDirectories.Add(Path.Combine(folder, subDirData.cFileName));
-						}
+							if (token.IsCancellationRequested)
+								break;
 
-						if (token.IsCancellationRequested)
-							break;
+							var isDirectory = ((FileAttributes)subDirData.dwFileAttributes & FileAttributes.Directory) == FileAttributes.Directory;
+							if (isDirectory && subDirData.cFileName != "." && subDirData.cFileName != "..")
+								subDirectories.Add(Path.Combine(folder, subDirData.cFileName));
 
-						hasNextDir = Win32PInvoke.FindNextFile(hSubDir, out subDirData);
-					} while (hasNextDir);
-
-					Win32PInvoke.FindClose(hSubDir);
-				}, token);
+							hasNextDir = Win32PInvoke.FindNextFile(rawHandle, out subDirData);
+						} while (hasNextDir);
+					}
+				});
 
 				foreach (var subDir in subDirectories)
 				{
@@ -569,25 +605,29 @@ namespace Files.App.Utils.Storage
 					await SearchWithWin32Async(subDir, hiddenOnly, maxItemCount - (uint)results.Count, results, token);
 				}
 			}
+			else
+			{
+				hSubDir?.Dispose();
+			}
 		}
 
-		private ListedItem GetListedItemAsync(string itemPath, WIN32_FIND_DATA findData)
+		private ListedItem? GetListedItemAsync(string itemPath, WIN32_FIND_DATA findData)
 		{
-			ListedItem listedItem = null;
+			ListedItem? listedItem = null;
 			var isHidden = ((FileAttributes)findData.dwFileAttributes & FileAttributes.Hidden) == FileAttributes.Hidden;
 			var isFolder = ((FileAttributes)findData.dwFileAttributes & FileAttributes.Directory) == FileAttributes.Directory;
-			Win32PInvoke.FileTimeToSystemTime(ref findData.ftLastWriteTime, out Win32PInvoke.SYSTEMTIME systemModifiedTimeOutput);
-			Win32PInvoke.FileTimeToSystemTime(ref findData.ftCreationTime, out Win32PInvoke.SYSTEMTIME systemCreatedTimeOutput);
+			Win32PInvoke.FileTimeToSystemTime(in findData.ftLastWriteTime, out Win32PInvoke.SYSTEMTIME systemModifiedTimeOutput);
+			Win32PInvoke.FileTimeToSystemTime(in findData.ftCreationTime, out Win32PInvoke.SYSTEMTIME systemCreatedTimeOutput);
 
 			if (!isFolder)
 			{
-				string itemFileExtension = null;
-				string itemType = null;
+				string? itemFileExtension = null;
+				string? itemType = null;
 				long fileSize = Win32FindDataExtensions.GetSize(findData);
 				if (findData.cFileName.Contains('.', StringComparison.Ordinal))
 				{
 					itemFileExtension = Path.GetExtension(itemPath);
-					itemType = itemFileExtension.Trim('.') + " " + itemType;
+					itemType = itemFileExtension!.Trim('.') + " " + itemType;
 				}
 
 				listedItem = new ListedItem(null)
@@ -631,7 +671,7 @@ namespace Files.App.Utils.Storage
 					listedItem.ItemPath,
 					Constants.ShellIconSizes.Small,
 					isFolder,
-					IconOptions.ReturnIconOnly | IconOptions.UseCurrentScale)
+					IconOptions.ReturnIconOnly)
 					.ContinueWith((t) =>
 					{
 						if (t.IsCompletedSuccessfully && t.Result is not null)
@@ -651,10 +691,12 @@ namespace Files.App.Utils.Storage
 
 		private async Task<ListedItem> GetListedItemAsync(IStorageItem item)
 		{
-			ListedItem listedItem = null;
+			ListedItem? listedItem = null;
 			if (item.IsOfType(StorageItemTypes.Folder))
 			{
-				var folder = item.AsBaseStorageFolder();
+				var folder = item.AsBaseStorageFolder()
+					?? throw new InvalidOperationException($"The search result '{item.Path}' could not be opened as a folder.");
+
 				var props = await folder.GetBasicPropertiesAsync();
 				if (folder is BinStorageFolder binFolder)
 				{
@@ -666,7 +708,6 @@ namespace Files.App.Utils.Storage
 						ItemDateModifiedReal = props.DateModified,
 						ItemDateCreatedReal = folder.DateCreated,
 						ItemType = folderTypeTextLocalized,
-						NeedsPlaceholderGlyph = false,
 						Opacity = 1,
 						FileSize = props.Size.ToSizeString(),
 						FileSizeBytes = (long)props.Size,
@@ -684,21 +725,22 @@ namespace Files.App.Utils.Storage
 						ItemDateModifiedReal = props.DateModified,
 						ItemDateCreatedReal = folder.DateCreated,
 						ItemType = folderTypeTextLocalized,
-						NeedsPlaceholderGlyph = false,
 						Opacity = 1
 					};
 				}
 			}
 			else if (item.IsOfType(StorageItemTypes.File))
 			{
-				var file = item.AsBaseStorageFile();
+				var file = item.AsBaseStorageFile()
+					?? throw new InvalidOperationException($"The search result '{item.Path}' could not be opened as a file.");
+
 				var props = await file.GetBasicPropertiesAsync();
-				string itemFileExtension = null;
-				string itemType = null;
+				string? itemFileExtension = null;
+				string? itemType = null;
 				if (file.Name.Contains('.', StringComparison.Ordinal))
 				{
 					itemFileExtension = Path.GetExtension(file.Path);
-					itemType = itemFileExtension.Trim('.') + " " + itemType;
+					itemType = itemFileExtension!.Trim('.') + " " + itemType;
 				}
 
 				var itemSize = props.Size.ToSizeString();
@@ -717,7 +759,6 @@ namespace Files.App.Utils.Storage
 						ItemDateModifiedReal = props.DateModified,
 						ItemDateCreatedReal = file.DateCreated,
 						ItemType = itemType,
-						NeedsPlaceholderGlyph = false,
 						Opacity = 1,
 						ItemDateDeletedReal = binFile.DateDeleted,
 						ItemOriginalPath = binFile.OriginalPath
@@ -734,7 +775,6 @@ namespace Files.App.Utils.Storage
 						Opacity = 1,
 						FileImage = null,
 						LoadFileIcon = false,
-						NeedsPlaceholderGlyph = false,
 						ItemNameRaw = file.Name,
 						ItemDateModifiedReal = props.DateModified,
 						ItemDateCreatedReal = file.DateCreated,
@@ -778,7 +818,6 @@ namespace Files.App.Utils.Storage
 						ItemDateModifiedReal = props.DateModified,
 						ItemDateCreatedReal = file.DateCreated,
 						ItemType = itemType,
-						NeedsPlaceholderGlyph = false,
 						Opacity = 1
 					};
 				}
@@ -789,14 +828,13 @@ namespace Files.App.Utils.Storage
 					item.Path,
 					Constants.ShellIconSizes.Small,
 					item.IsOfType(StorageItemTypes.Folder),
-					IconOptions.ReturnIconOnly | IconOptions.UseCurrentScale);
+					IconOptions.ReturnIconOnly);
 
 				if (iconResult is not null)
 					listedItem.FileImage = await iconResult.ToBitmapAsync();
-				else
-					listedItem.NeedsPlaceholderGlyph = true;
 			}
-			return listedItem;
+			return listedItem
+				?? throw new InvalidOperationException($"The search result '{item.Path}' is neither a file nor a folder.");
 		}
 
 		private QueryOptions ToQueryOptions()
@@ -819,9 +857,9 @@ namespace Files.App.Utils.Storage
 		}
 
 		private static Task<FilesystemResult<BaseStorageFolder>> GetStorageFolderAsync(string path)
-			=> FilesystemTasks.Wrap(() => StorageFileExtensions.DangerousGetFolderFromPathAsync(path));
+			=> FilesystemTasks.WrapNullable(() => StorageFileExtensions.DangerousGetFolderFromPathAsync(path));
 
 		private static Task<FilesystemResult<BaseStorageFile>> GetStorageFileAsync(string path)
-			=> FilesystemTasks.Wrap(() => StorageFileExtensions.DangerousGetFileFromPathAsync(path));
+			=> FilesystemTasks.WrapNullable(() => StorageFileExtensions.DangerousGetFileFromPathAsync(path));
 	}
 }

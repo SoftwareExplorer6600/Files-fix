@@ -8,6 +8,7 @@ namespace Files.App.ViewModels.Settings
 	/// <summary>
 	/// Represents view model of <see cref="Views.Settings.ActionsPage"/>.
 	/// </summary>
+	[WinRT.GeneratedBindableCustomProperty([nameof(EditCommand), nameof(SaveCommand), nameof(CancelCommand), nameof(DeleteCommand)], [])]
 	public sealed partial class ActionsViewModel : ObservableObject
 	{
 		// Dependency injections
@@ -20,8 +21,8 @@ namespace Files.App.ViewModels.Settings
 		public ObservableCollection<ModifiableActionItem> ValidActionItems { get; } = [];
 		public ObservableCollection<ModifiableActionItem> AllActionItems { get; } = [];
 
-		private ObservableCollection<ModifiableActionItem> _FilteredActionItems;
-		public ObservableCollection<ModifiableActionItem> FilteredActionItems
+		private ObservableCollection<ModifiableActionItem>? _FilteredActionItems;
+		public ObservableCollection<ModifiableActionItem>? FilteredActionItems
 		{
 			get { return _FilteredActionItems; }
 			set { SetProperty(ref _FilteredActionItems, value); }
