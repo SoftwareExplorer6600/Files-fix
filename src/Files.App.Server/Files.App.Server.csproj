@@ -17,8 +17,8 @@
         <RuntimeIdentifier Condition="'$(Platform)' == 'x64'">win-x64</RuntimeIdentifier>
         <RuntimeIdentifier Condition="'$(Platform)' == 'arm64'">win-arm64</RuntimeIdentifier>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <CsWinRTComponent>true</CsWinRTComponent>
         <EnableWindowsTargeting>true</EnableWindowsTargeting>
+        <CsWinRTComponent>true</CsWinRTComponent>
         <CsWinRTWindowsMetadata>$(TargetWindowsVersion)</CsWinRTWindowsMetadata>
         <ApplicationManifest>app.manifest</ApplicationManifest>
         <PublishReadyToRun Condition="'$(Configuration)' == 'Debug'">False</PublishReadyToRun>
