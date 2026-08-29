@@ -12,7 +12,7 @@ namespace Files.App.Utils.Cloud
 	{
 		private static readonly ILogger _logger = Ioc.Default.GetRequiredService<ILogger<App>>();
 		private static readonly ICloudDetector _detector = Ioc.Default.GetRequiredService<ICloudDetector>();
-		public static EventHandler<NotifyCollectionChangedEventArgs> DataChanged;
+		public static EventHandler<NotifyCollectionChangedEventArgs>? DataChanged;
 		private static readonly List<DriveItem> _Drives = [];
 
 		public static IReadOnlyList<DriveItem> Drives
@@ -34,7 +34,7 @@ namespace Files.App.Utils.Cloud
 
 			foreach (var provider in providers)
 			{
-				_logger?.LogInformation($"Adding cloud provider \"{provider.Name}\" mapped to {provider.SyncFolder}");
+				_logger?.LogInformation($"Adding cloud provider {provider.ID} mapped to {LogPathHelper.RedactUserName(provider.SyncFolder)}");
 
 				var cloudProviderItem = new DriveItem()
 				{
@@ -97,7 +97,7 @@ namespace Files.App.Utils.Cloud
 						provider.SyncFolder,
 						Constants.ShellIconSizes.Small,
 						false,
-						IconOptions.ReturnIconOnly | IconOptions.UseCurrentScale);
+						IconOptions.ReturnIconOnly);
 
 					iconData = result;
 				}

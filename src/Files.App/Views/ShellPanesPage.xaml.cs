@@ -16,6 +16,7 @@ using System.Runtime.CompilerServices;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.UI.ViewManagement;
+using WinRT;
 using GridSplitter = Files.App.Controls.GridSplitter;
 
 namespace Files.App.Views
@@ -72,7 +73,7 @@ namespace Files.App.Views
 			}
 		}
 
-		public IShellPage ActivePaneOrColumn
+		public IShellPage? ActivePaneOrColumn
 		{
 			get
 			{
@@ -80,7 +81,7 @@ namespace Files.App.Views
 				if (ActivePane is not null && ActivePane.IsColumnView && ActivePane.SlimContentPage is ColumnsLayoutPage columnLayoutPage)
 					return columnLayoutPage.ActiveColumnShellPage;
 
-				return ActivePane ?? GetPane(0)!;
+				return ActivePane ?? GetPane(0);
 			}
 		}
 
@@ -413,14 +414,20 @@ namespace Files.App.Views
 		/// <inheritdoc/>
 		public void FocusActivePane()
 		{
-			if (ActivePane == (IShellPage)GetPane(0)!)
-				GetPane(0)?.Focus(FocusState.Programmatic);
-			else
-				GetPane(1)?.Focus(FocusState.Programmatic);
+			var activePane = ActivePane == (IShellPage)GetPane(0)! ? GetPane(0) : GetPane(1);
 
-			// Focus file list
-			if (ActivePane is BaseShellPage baseShellPage)
-				baseShellPage.ContentPage?.ItemManipulationModel.FocusFileList();
+			// Skip when the file list is empty and no text input currently has focus:
+			// focusing the pane in that state lands XAML focus on the outer ListView
+			// element itself, which causes subsequent popup-dismissal to push newly
+			// opened top-level windows behind main (Files #13697). If a text input
+			// currently has focus (e.g. omnibar after Enter), we still need to move
+			// focus off it so keyboard shortcuts work.
+			if (activePane?.ShellViewModel?.FilesAndFolders?.Count == 0 &&
+				!UIHelpers.IsTextInputFocused(activePane.XamlRoot))
+				return;
+
+			activePane?.Focus(FocusState.Programmatic);
+			activePane?.ContentPage?.ItemManipulationModel.FocusFileList();
 		}
 
 		/// <inheritdoc/>
@@ -713,6 +720,7 @@ namespace Files.App.Views
 		private static readonly string[] _cornerProps =
 			["TopLeftRadius", "TopRightRadius", "BottomRightRadius", "BottomLeftRadius"];
 
+		[DynamicWindowsRuntimeCast(typeof(SolidColorBrush))]
 		private SpriteVisual GetOrCreateIndicatorVisual()
 		{
 			if (_indicatorVisual is not null)
@@ -925,6 +933,7 @@ namespace Files.App.Views
 			WindowIsCompact = MainWindow.Instance.Bounds.Width <= Constants.UI.MultiplePaneWidthThreshold;
 		}
 
+		[DynamicWindowsRuntimeCast(typeof(UIElement))]
 		private void Pane_Loaded(object sender, RoutedEventArgs e)
 		{
 			if (sender is UIElement element)
@@ -949,6 +958,7 @@ namespace Files.App.Views
 			};
 		}
 
+		[DynamicWindowsRuntimeCast(typeof(UIElement))]
 		private void Pane_PointerPressed(object sender, PointerRoutedEventArgs e)
 		{
 			// Focus pane if interaction suggests intent to focus:
@@ -983,6 +993,7 @@ namespace Files.App.Views
 				ActivePane = newActivePane;
 		}
 
+		[DynamicWindowsRuntimeCast(typeof(UIElement))]
 		private void Pane_RightTapped(object sender, RoutedEventArgs e)
 		{
 			if (sender != ActivePane && sender is IShellPage shellPage && shellPage.SlimContentPage is not ColumnsLayoutPage)
@@ -1042,7 +1053,7 @@ namespace Files.App.Views
 
 		public void Dispose()
 		{
-			App.Logger.LogInformation($"ShellPanesPage.Dispose: PaneCount={GetPaneCount()}, ActivePane={LogPathHelper.GetPathIdentifier(ActivePane?.TabBarItemParameter?.NavigationParameter?.ToString())}");
+			App.Logger.LogInformation($"ShellPanesPage.Dispose: PaneCount={GetPaneCount()}, ActivePane={LogPathHelper.RedactPath(ActivePane?.TabBarItemParameter?.NavigationParameter?.ToString())}");
 
 			TabBar.TabDragStarted -= TabBar_TabDragStarted;
 			TabBar.TabDragCompleted -= TabBar_TabDragCompleted;
@@ -1068,6 +1079,11 @@ namespace Files.App.Views
 				sizer.ManipulationCompleted -= Sizer_ManipulationCompleted;
 				sizer.ManipulationStarted -= Sizer_ManipulationStarted;
 			}
+
+			_ActivePane = null;
+			RootGrid.Children.Clear();
+			RootGrid.RowDefinitions.Clear();
+			RootGrid.ColumnDefinitions.Clear();
 		}
 	}
 }
